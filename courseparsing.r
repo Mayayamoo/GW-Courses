@@ -5,12 +5,56 @@ library(stringr)
 library(purrr)
 library(igraph)
 
-interested = c("List of Departments that are interesting or relevant to you, use department code. eg. "PSYC", "CCAS")
+interested = c("IAFF", "PUBH", "PSC", "CSCI", "ECON", "SMPA", "PSYC", "EMSE", "SOC",
+                "PPPA", "MATH", "PHIL", "DNSC", "STAT", "FINA", "DATS", "ISTM", "CHIN",
+                "IBUS", "HOL", "SMPP", "ORSC", "PMGD", "QSS", "CE", "GEOG", "EMSE", "ENVR",
+                "ECE", "BADM", "NRSC", "SUST")
 
-taken = c("Classes you've already taken, use department and course code",
-          "eg. "PSYC 1001", "PHIL 2045", "BISC 1007", "SMPA 2112", "SMPA 2113"")
+tier2 = c("HIST", "ECE", "EMSE", "PSYD", "CCAS", "GTCH")
 
-# Short list of required classes, not complete bc I got lazy, will finish up later (probably not). 
+assumed_taken = c("PSYC 1001", "PHIL 2045", "BISC 1007", "SMPA 2112", "SMPA 2113",
+          "CSCI 3552", "SOC 1001","CMUS 3123", "CHEM 1111", "ENGL 1210", "FILM 2151",
+          "PSC 1002", "PSC 2211", "CSCI 1012", "CMUS 1101", "PHIL 2131", "ECON 1011", 
+          "IAFF 1005", "UW 1020", "COMM 1040")
+
+granted = c("PHIL 2045", "PSYC 1001", "CHEM 1111", "CMUS 1101", "COMM 1012", "ECON 1012",
+            "PHIL 2131", "PSC 1002", "SOC 1001", "UW 1020")
+
+cred_bnot_granted = list(
+        to_fix = c("Intro to food Science", "Graphic Design Tools", "Digital Animation 1", "Intro to Jazz",
+            "State & Local Government", "Intro Digital Media", "Intro to Film"),
+        to_fix_analog = c("BISC 1007", "SMPA 2113","CSCI 3552","CMUS 3123","PSC 2211", "SMPA 2112","FILM 2151")
+)
+
+mostly_granted <- c(granted, cred_bnot_granted$to_fix_analog)
+
+class_stats = list(
+    total_granted = length(granted),
+    total_cred_bnotgranted = length(cred_bnot_granted$to_fix_analog),
+    total_assumed = length(assumed_taken)
+)
+
+class_stats
+missing_classes_uncredited <- class_stats$total_assumed - (class_stats$total_cred_bnotgranted + class_stats$total_granted)
+
+missing_classes_uncredited
+missing_classes_credited <- class_stats$total_granted - class_stats$total_cred_bnotgranted
+
+granted_assumed <- granted[granted %in% assumed_taken]
+granted_nassumed <- granted[!granted %in% assumed_taken]
+assumed_not_granted <- assumed_taken[!assumed_taken %in% granted]
+
+classes_missing <- assumed_not_granted[!assumed_not_granted %in% cred_bnot_granted[[2]]]
+
+named_missing_classes = list(
+    names=c("Introduction to Creative Writing",
+        "Introduction to Programming with Python","Principles of Economics 1", "Introduction to International Affairs",
+        "Public Communication"),
+    classes_missing
+)
+    
+named_missing_classes
+
 requirements = list(
     arts = c("CMUS 3123"),
     global = c("PSC 1001"),
@@ -35,7 +79,7 @@ total.reqs = list(
     oral.comm = 1
 )
 
-cl <-read_csv("gw_courses_fall2025_full.csv", show_col_types = FALSE) 
+cl <-read_csv("data/gw_courses_fall2025_full.csv", show_col_types = FALSE) 
 
 cl <- cl %>%
     separate(
@@ -48,8 +92,7 @@ cl <- cl %>%
         Credits = as.numeric(str_extract(Credits, "\\d+")),
         )
 
-# Merges all duplicate classes (original course list lists each course + time slot.) I plan to introduce a version of this that can give you your exact schedule based on your interests
-# for now just raw classes
+
 cl.unique <- cl %>%
     arrange(Subject, Course, Title, desc(Status == "OPEN")) %>%
     distinct(Subject, Course, Title, .keep_all = TRUE)
@@ -65,9 +108,8 @@ cl.unique <- cl.unique %>%
     ungroup() %>%
     select(-is_main_course)
 
-# Create completed dataframe from taken courses
 completed <- cl.unique %>%
-    filter(sub_course %in% taken) %>%
+    filter(sub_course %in% granted) %>%
     mutate(
         completed = TRUE
     )
@@ -107,14 +149,12 @@ cl.prereq <- cl.unique %>%
     )
 
 
-# First, create a graph of prerequisite relationships
 prereq_relationships <- cl.prereq %>%
     filter(!is.na(prerequisites)) %>%
     select(course = sub_course, prerequisites) %>%
     mutate(prerequisites = str_split(prerequisites, ", ")) %>%
     unnest(prerequisites)
 
-# Create a directed graph
 prereq_graph <- graph_from_data_frame(
     d = prereq_relationships %>% select(prerequisites, course),
     directed = TRUE
@@ -147,17 +187,13 @@ get_all_prerequisites <- function(course_code, graph) {
 get_all_dependencies <- function(course_code, graph) {
     # If course not in graph, return NA
     if (!course_code %in% V(graph)$name) return(NA)
-    
     # Get vertex ID for the course
     v_id <- which(V(graph)$name == course_code)
-    
     # Get all descendants (courses that depend on this one)
     descendants <- subcomponent(graph, v_id, mode = "out")
     descendant_names <- V(graph)$name[descendants]
-    
     # Remove the course itself from the list
     descendant_names <- descendant_names[descendant_names != course_code]
-    
     # Return comma-separated list, or NA if empty
     if (length(descendant_names) > 0) {
         return(paste(descendant_names, collapse = ", "))
@@ -198,8 +234,9 @@ cl.filtered <- cl.prereq %>%
 
 cl.final <- cl.filtered %>%
     mutate(
-        completed = sub_course %in% taken,  # Use taken directly instead of completed$sub_course
+        completed = sub_course %in% granted,  # Use taken directly instead of completed$sub_course
         credits = ifelse(is.na(Credits), 0, Credits),
+        status = Status,
         subject = Subject,
         course = Course,
         title = Title,
@@ -214,16 +251,19 @@ cl.final <- cl.filtered %>%
                 # Split prerequisites into a vector
                 prereq_list <- str_split(x, ", ")[[1]]
                 # Check if all prerequisites are in the taken vector
-                all(prereq_list %in% taken)  # Use taken instead of completed$sub_course
+                all(prereq_list %in% granted)  # Use taken instead of completed$sub_course
             }
         })
     ) %>%
-    select(completed, lab_discussion, subject, course, title, credits, Campus, description, comments, 
+    select(completed, lab_discussion, status, subject, course, title, credits, Campus, description, comments, 
            prerequisites, all_prerequisites, prerequisites_count, dependencies, dependants_count, 
            prereqs_completed)
 
 cl.prefilt <- cl.final %>%
-    filter(prereqs_completed == TRUE)
+    filter(prereqs_completed == TRUE) %>%
+    filter(status == "OPEN") %>%
+    filter(!(subject %in% c("CHIN", "GEOG"))) %>%
+    select(-status)
 
 # cl.prereq <- cl.filtered %>%
 #    filter(grepl("Prerequisites|Prerequisite|Prereq|prereq|pre-req|Pre-req", Comments) |
@@ -238,8 +278,8 @@ subject.count <- cl.unique %>%
     summarize(Count = n()) %>%
     arrange(desc(Count))
 
-write.csv(cl.final, "gw_courses_fall2025_final.csv", row.names = FALSE)
-write.csv(cl.prefilt, "gw_courses_fall2025_prereq_adjusted.csv", row.names = FALSE)
+write.csv(cl.final, "results/gw_courses_fall2025_final.csv", row.names = FALSE)
+write.csv(cl.prefilt, "results/gw_courses_fall2025_prereq_adjusted.csv", row.names = FALSE)
 
 
 
