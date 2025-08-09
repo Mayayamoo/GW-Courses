@@ -108,6 +108,7 @@ cl.unique <- cl.unique %>%
     ungroup() %>%
     select(-is_main_course)
 
+# Create completed dataframe from taken courses
 completed <- cl.unique %>%
     filter(sub_course %in% granted) %>%
     mutate(
@@ -116,6 +117,11 @@ completed <- cl.unique %>%
 
 extract_prereq <- function(text, sub_course) {
     if(is.na(text)) return(NA)
+
+    if(!str_detect(text, regex("prerequisite|prereq|require|permission|pre-req|pre-requisite|pre req|pre requisite",
+        ignore_case = TRUE))) {
+        return(NA)
+    }
 
     pattern <- paste(sub_course, collapse = "|")
     matches <- str_extract_all(text, pattern)
@@ -149,12 +155,14 @@ cl.prereq <- cl.unique %>%
     )
 
 
+# First, create a graph of prerequisite relationships
 prereq_relationships <- cl.prereq %>%
     filter(!is.na(prerequisites)) %>%
     select(course = sub_course, prerequisites) %>%
     mutate(prerequisites = str_split(prerequisites, ", ")) %>%
     unnest(prerequisites)
 
+# Create a directed graph
 prereq_graph <- graph_from_data_frame(
     d = prereq_relationships %>% select(prerequisites, course),
     directed = TRUE
@@ -187,13 +195,17 @@ get_all_prerequisites <- function(course_code, graph) {
 get_all_dependencies <- function(course_code, graph) {
     # If course not in graph, return NA
     if (!course_code %in% V(graph)$name) return(NA)
+    
     # Get vertex ID for the course
     v_id <- which(V(graph)$name == course_code)
+    
     # Get all descendants (courses that depend on this one)
     descendants <- subcomponent(graph, v_id, mode = "out")
     descendant_names <- V(graph)$name[descendants]
+    
     # Remove the course itself from the list
     descendant_names <- descendant_names[descendant_names != course_code]
+    
     # Return comma-separated list, or NA if empty
     if (length(descendant_names) > 0) {
         return(paste(descendant_names, collapse = ", "))
@@ -226,8 +238,10 @@ cl.prereq <- cl.prereq %>%
 
 cl.filtered <- cl.prereq %>%
     filter(Subject %in% interested) %>%
-    filter(!(Title %in% c("Research", "Independent Study", "Thesis Research", "Graduate Seminar",
-                        "Independent Study", "Capstone", "Capstone Project", "Capstone Research"))
+    filter(!grepl(paste(c("Research", "Independent Study", "Thesis Research", "Graduate Seminar",
+                    "Independent Study", "Capstone", "Capstone Project", "Capstone Research", "Doctoral", "Senior Project"),
+                    collapse = "|"),
+                    Title)
     ) %>%
     filter(!(Credits == 0)) %>%
     filter(!grepl("Registration restricted to graduate students only", Comments))
@@ -262,7 +276,7 @@ cl.final <- cl.filtered %>%
 cl.prefilt <- cl.final %>%
     filter(prereqs_completed == TRUE) %>%
     filter(status == "OPEN") %>%
-    filter(!(subject %in% c("CHIN", "GEOG"))) %>%
+    filter(!(subject %in% c("CHIN", "GEOG", "CE", "CSCI", "MATH", "PSYC"))) %>%
     select(-status)
 
 # cl.prereq <- cl.filtered %>%
@@ -277,6 +291,12 @@ subject.count <- cl.unique %>%
     group_by(Subject) %>%
     summarize(Count = n()) %>%
     arrange(desc(Count))
+
+subject.count.2 <- cl.prefilt %>%
+    group_by(subject) %>%
+    summarize(Count = n()) %>%
+    arrange(desc(Count))
+
 
 write.csv(cl.final, "results/gw_courses_fall2025_final.csv", row.names = FALSE)
 write.csv(cl.prefilt, "results/gw_courses_fall2025_prereq_adjusted.csv", row.names = FALSE)
